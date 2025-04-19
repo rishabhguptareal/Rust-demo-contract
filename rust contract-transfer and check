@@ -1,0 +1,158 @@
+// Simple Rust Token Contract
+// This contract implements a basic token with transfer and balance functionality
+
+use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
+use near_sdk::collections::LookupMap;
+use near_sdk::{env, near_bindgen, AccountId, Balance, PanicOnDefault};
+
+#[near_bindgen]
+#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
+pub struct TokenContract {
+    // Owner of the contract
+    owner_id: AccountId,
+    // Total supply of tokens
+    total_supply: Balance,
+    // Balances for each account
+    balances: LookupMap<AccountId, Balance>,
+}
+
+#[near_bindgen]
+impl TokenContract {
+    #[init]
+    pub fn new(owner_id: AccountId, total_supply: Balance) -> Self {
+        let mut balances = LookupMap::new(b"b".to_vec());
+        balances.insert(&owner_id, &total_supply);
+        
+        Self {
+            owner_id,
+            total_supply,
+            balances,
+        }
+    }
+    
+    // Returns the balance of the account
+    pub fn get_balance(&self, account_id: AccountId) -> Balance {
+        self.balances.get(&account_id).unwrap_or(0)
+    }
+    
+    // Transfer tokens to another account
+    pub fn transfer(&mut self, receiver_id: AccountId, amount: Balance) {
+        let sender_id = env::predecessor_account_id();
+        let sender_balance = self.get_balance(sender_id.clone());
+        
+        // Check if sender has enough tokens
+        assert!(
+            sender_balance >= amount,
+            "Not enough tokens to transfer"
+        );
+        
+        // Update sender balance
+        self.balances.insert(
+            &sender_id,
+            &(sender_balance - amount)
+        );
+        
+        // Update receiver balance
+        let receiver_balance = self.get_balance(receiver_id.clone());
+        self.balances.insert(
+            &receiver_id,
+            &(receiver_balance + amount)
+        );
+        
+        // Log the transfer
+        env::log_str(&format!(
+            "Transfer {} tokens from {} to {}",
+            amount, sender_id, receiver_id
+        ));
+    }
+    
+    // Only owner can mint new tokens
+    pub fn mint(&mut self, receiver_id: AccountId, amount: Balance) {
+        // Check if caller is the owner
+        assert_eq!(
+            env::predecessor_account_id(),
+            self.owner_id,
+            "Only owner can mint tokens"
+        );
+        
+        // Update total supply
+        self.total_supply += amount;
+        
+        // Update receiver balance
+        let receiver_balance = self.get_balance(receiver_id.clone());
+        self.balances.insert(
+            &receiver_id,
+            &(receiver_balance + amount)
+        );
+        
+        // Log the mint
+        env::log_str(&format!(
+            "Minted {} tokens to {}",
+            amount, receiver_id
+        ));
+    }
+    
+    // Get total supply of tokens
+    pub fn get_total_supply(&self) -> Balance {
+        self.total_supply
+    }
+}
+
+// Tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use near_sdk::test_utils::{accounts, VMContextBuilder};
+    use near_sdk::{testing_env, MockedBlockchain};
+
+    fn get_context(predecessor_account_id: AccountId) -> VMContextBuilder {
+        let mut builder = VMContextBuilder::new();
+        builder.predecessor_account_id(predecessor_account_id);
+        builder
+    }
+
+    #[test]
+    fn test_new() {
+        let owner = accounts(0);
+        let contract = TokenContract::new(owner.clone(), 1000);
+        assert_eq!(contract.get_balance(owner), 1000);
+        assert_eq!(contract.get_total_supply(), 1000);
+    }
+
+    #[test]
+    fn test_transfer() {
+        let owner = accounts(0);
+        let user = accounts(1);
+        
+        let mut context = get_context(owner.clone());
+        testing_env!(context.build());
+        
+        let mut contract = TokenContract::new(owner.clone(), 1000);
+        
+        // Transfer tokens
+        contract.transfer(user.clone(), 100);
+        
+        // Check balances
+        assert_eq!(contract.get_balance(owner), 900);
+        assert_eq!(contract.get_balance(user), 100);
+    }
+
+    #[test]
+    fn test_mint() {
+        let owner = accounts(0);
+        let user = accounts(1);
+        
+        let mut context = get_context(owner.clone());
+        testing_env!(context.build());
+        
+        let mut contract = TokenContract::new(owner.clone(), 1000);
+        
+        // Mint tokens to user
+        contract.mint(user.clone(), 500);
+        
+        // Check balances and total supply
+        assert_eq!(contract.get_balance(owner), 1000);
+        assert_eq!(contract.get_balance(user), 500);
+        assert_eq!(contract.get_total_supply(), 1500);
+    }
+}
